@@ -1,0 +1,138 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: EC2
+
+Parameters:
+  AMIId:
+    Description: The ami to use (default Ubuntu 18.04 en la región us-east-1)
+    Type: AWS::EC2::Image::Id
+    Default: ami-013f17f36f8b1fefb
+  DBPassword:
+    Description: Database password
+    Type: String
+    NoEcho: true
+    MinLength: 8
+  S3BucketName:
+    Description: Name of the bucket
+    Type: String
+    Default: sanguino.cloudapps.urjc
+  JarDownloadUrl:
+    Description: URL to download and rumthe .jar file
+    Type: String
+    Default: https://s3.amazonaws.com/practica-2.cloud.michel/app.jar
+
+
+Resources:
+
+  s3WritableRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: ec2.amazonaws.com
+          Action: sts:AssumeRole
+      Path: /
+
+  rolePolicies:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: s3WritablePolicy
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Action: 's3:*'
+          Resource: '*'
+      Roles:
+      - !Ref s3WritableRole
+
+  scauBucket:
+    Type: AWS::S3::Bucket
+    DependsOn: s3WritableRole
+    DeletionPolicy: Delete
+    Properties:
+      BucketName: !Ref S3BucketName
+      AccessControl: PublicRead
+
+  homeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    DependsOn: scauBucket
+    Properties:
+      GroupDescription: Allow 8843 from my host
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 8443
+        ToPort: 8443
+        CidrIp: 90.74.96.228/32
+
+  rdsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    DependsOn: homeSecurityGroup
+    Properties:
+      GroupDescription: SG for MySQL RDS
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 3306
+        ToPort: 3306
+        SourceSecurityGroupName: !Ref homeSecurityGroup
+
+  rdsDBInstance:
+    Type: AWS::RDS::DBInstance
+    DependsOn: rdsSecurityGroup
+    Properties:
+      DBInstanceClass: db.t2.micro
+      AllocatedStorage: 8
+      AllowMajorVersionUpgrade: false
+      AutoMinorVersionUpgrade: false
+      DBInstanceIdentifier: rdsp2
+      DBName: rdsp2
+      Engine: mysql
+      EngineVersion: 8.0
+      MasterUsername: rdsp2
+      MasterUserPassword: !Ref DBPassword
+      MultiAZ: false
+      PubliclyAccessible: false
+      StorageEncrypted: false
+      VPCSecurityGroups:
+      - !GetAtt rdsSecurityGroup.GroupId
+
+  adsEC2Instance:
+    Type: AWS::EC2::Instance
+    DependsOn: rdsDBInstance
+    Properties:
+      KeyName: ec2p2
+      ImageId: !Ref AMIId
+      InstanceType: t2.micro
+      SecurityGroupIds:
+      - !Ref homeSecurityGroup
+      UserData:
+        Fn::Base64:
+          Fn::Sub:
+          - |
+            #!/bin/bash -xe
+            sudo apt update && sudo apt install -y openjdk-11-jre
+            export BUCKET_NAME=${S3BucketName}
+            export RDS_ENDPOINT=${rdsDBInstanceAddress}
+            export REGION=us-east-1
+            export RDS_DATABASE=rdsp2
+            export RDS_PASS=${DBPassword}
+            export RDS_USER=rdsp2
+            wget -O app.jar ${JarDownloadUrl}
+            java -jar -Dspring.profiles.active=production app.jar
+          - S3BucketName: !Ref S3BucketName
+            rdsDBInstanceAddress: !GetAtt rdsDBInstance.Endpoint.Address
+            DBPassword: !Ref DBPassword
+            JarDownloadUrl: !Ref JarDownloadUrl
+
+Outputs:
+  WebSiteURL:
+    Value:
+      !Join
+    - ''
+    - - "https://"
+      - !GetAtt adsEC2Instance.PublicDnsName
+      - ":8443"
+      - "/api/events/"
+    Description: "P2 - Ads app"
