@@ -2,28 +2,31 @@ AWSTemplateFormatVersion: 2010-09-09
 Description: EC2
 
 Parameters:
+
   AMIId:
     Description: The ami to use (default Ubuntu 18.04 en la región us-east-1)
     Type: AWS::EC2::Image::Id
     Default: ami-013f17f36f8b1fefb
+
   DBPassword:
     Description: Database password
     Type: String
     NoEcho: true
     MinLength: 8
+
   S3BucketName:
     Description: Name of the bucket
     Type: String
     Default: sanguino.cloudapps.urjc
+
   JarDownloadUrl:
     Description: URL to download and rumthe .jar file
     Type: String
     Default: https://s3.amazonaws.com/practica-2.cloud.michel/app.jar
 
-
 Resources:
 
-  s3WritableRole:
+  S3WritableRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
@@ -35,7 +38,7 @@ Resources:
           Action: sts:AssumeRole
       Path: /
 
-  rolePolicies:
+  S3RolePolicy:
     Type: AWS::IAM::Policy
     Properties:
       PolicyName: s3WritablePolicy
@@ -46,19 +49,26 @@ Resources:
           Action: 's3:*'
           Resource: '*'
       Roles:
-      - !Ref s3WritableRole
+      - !Ref S3WritableRole
 
-  scauBucket:
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+      - !Ref S3WritableRole
+
+  S3Bucket:
     Type: AWS::S3::Bucket
-    DependsOn: s3WritableRole
+    DependsOn: S3WritableRole
     DeletionPolicy: Delete
     Properties:
       BucketName: !Ref S3BucketName
       AccessControl: PublicRead
 
-  homeSecurityGroup:
+  Ec2SecurityGroup:
     Type: AWS::EC2::SecurityGroup
-    DependsOn: scauBucket
+    DependsOn: S3Bucket
     Properties:
       GroupDescription: Allow 8843 from my host
       SecurityGroupIngress:
@@ -67,20 +77,20 @@ Resources:
         ToPort: 8443
         CidrIp: 90.74.96.228/32
 
-  rdsSecurityGroup:
+  RdsSecurityGroup:
     Type: AWS::EC2::SecurityGroup
-    DependsOn: homeSecurityGroup
+    DependsOn: Ec2SecurityGroup
     Properties:
       GroupDescription: SG for MySQL RDS
       SecurityGroupIngress:
       - IpProtocol: tcp
         FromPort: 3306
         ToPort: 3306
-        SourceSecurityGroupName: !Ref homeSecurityGroup
+        SourceSecurityGroupName: !Ref Ec2SecurityGroup
 
-  rdsDBInstance:
+  RdsDBInstance:
     Type: AWS::RDS::DBInstance
-    DependsOn: rdsSecurityGroup
+    DependsOn: RdsSecurityGroup
     Properties:
       DBInstanceClass: db.t2.micro
       AllocatedStorage: 8
@@ -96,17 +106,18 @@ Resources:
       PubliclyAccessible: false
       StorageEncrypted: false
       VPCSecurityGroups:
-      - !GetAtt rdsSecurityGroup.GroupId
+      - !GetAtt RdsSecurityGroup.GroupId
 
-  adsEC2Instance:
+  EC2Instance:
     Type: AWS::EC2::Instance
-    DependsOn: rdsDBInstance
+    DependsOn: RdsDBInstance
     Properties:
       KeyName: ec2p2
       ImageId: !Ref AMIId
       InstanceType: t2.micro
+      IamInstanceProfile: !Ref InstanceProfile
       SecurityGroupIds:
-      - !Ref homeSecurityGroup
+      - !Ref Ec2SecurityGroup
       UserData:
         Fn::Base64:
           Fn::Sub:
@@ -114,7 +125,7 @@ Resources:
             #!/bin/bash -xe
             sudo apt update && sudo apt install -y openjdk-11-jre
             export BUCKET_NAME=${S3BucketName}
-            export RDS_ENDPOINT=${rdsDBInstanceAddress}
+            export RDS_ENDPOINT=${RdsDBInstanceAddress}
             export REGION=us-east-1
             export RDS_DATABASE=rdsp2
             export RDS_PASS=${DBPassword}
@@ -122,17 +133,20 @@ Resources:
             wget -O app.jar ${JarDownloadUrl}
             java -jar -Dspring.profiles.active=production app.jar
           - S3BucketName: !Ref S3BucketName
-            rdsDBInstanceAddress: !GetAtt rdsDBInstance.Endpoint.Address
+            RdsDBInstanceAddress: !GetAtt RdsDBInstance.Endpoint.Address
             DBPassword: !Ref DBPassword
             JarDownloadUrl: !Ref JarDownloadUrl
 
 Outputs:
-  WebSiteURL:
+  PublicDns:
+    Value: !GetAtt EC2Instance.PublicDnsName
+    Description: "P2 - PublicDns"
+  EventsEndpoint:
     Value:
       !Join
     - ''
     - - "https://"
-      - !GetAtt adsEC2Instance.PublicDnsName
+      - !GetAtt EC2Instance.PublicDnsName
       - ":8443"
       - "/api/events/"
-    Description: "P2 - Ads app"
+    Description: "P2 - EventsEndpoint to test connections"
