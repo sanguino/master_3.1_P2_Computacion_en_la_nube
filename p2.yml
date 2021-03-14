@@ -47,7 +47,7 @@ Resources:
         Statement:
         - Effect: Allow
           Action: 's3:*'
-          Resource: '*'
+          Resource: [!Sub 'arn:aws:s3:::${S3BucketName}/*']
       Roles:
       - !Ref S3WritableRole
 
@@ -112,7 +112,6 @@ Resources:
     Type: AWS::EC2::Instance
     DependsOn: RdsDBInstance
     Properties:
-      KeyName: ec2p2
       ImageId: !Ref AMIId
       InstanceType: t2.micro
       IamInstanceProfile: !Ref InstanceProfile
