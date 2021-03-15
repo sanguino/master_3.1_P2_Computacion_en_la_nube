@@ -43,7 +43,7 @@ Resources:
         - Action: s3:GetObject
           Effect: Allow
           Resource: !Sub 'arn:aws:s3:::${S3BucketName}/*'
-          Principal: *
+          Principal: '*'
 
   S3RDSRole:
     Type: AWS::IAM::Role
